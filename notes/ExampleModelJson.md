@@ -16,7 +16,7 @@ Source: a Continue-style `config.yml` defining the custom model
 | `extraBodyProperties.chat_template_kwargs.enable_thinking` | `"compat": { "thinkingFormat": "qwen-chat-template" }` | pi has a **built-in** mode for exactly this Qwen3 hybrid-thinking pattern (`packages/ai/src/api/openai-completions.ts:615`). It auto-sends `chat_template_kwargs: { enable_thinking, preserve_thinking: true }`, driven by pi's own `/thinking` level rather than a hardcoded value — see caveat below. |
 | `contextLength` | `"contextWindow"` | |
 | `defaultCompletionOptions.maxTokens` | `"maxTokens"` | |
-| `defaultCompletionOptions.temperature` / `topP` | — | **Not supported.** `models.json`'s `ModelDefinitionSchema` has no sampling-parameter fields; pi doesn't send `temperature`/`topP` for its own agent calls. There's no direct equivalent. |
+| `defaultCompletionOptions.temperature` / `topP` | — | **No config-file equivalent**, but not for the reason I first said. See correction below. |
 
 ## Converted `~/.pi/agent/models.json`
 
@@ -63,6 +63,34 @@ model. If you want it **always** on regardless of pi's thinking toggle (a truer 
   "chatTemplateKwargs": { "enable_thinking": true, "preserve_thinking": true }
 }
 ```
+
+## Correction: `temperature` is actually supported at the pi-ai layer
+
+I originally wrote that pi "doesn't send `temperature`/`topP`". That's wrong for `temperature`.
+`packages/ai/src/types.ts:110` defines `temperature?: number` on `StreamOptions`, and
+`packages/ai/src/api/openai-completions.ts:578-579` forwards it into the request params whenever
+it's set:
+
+```typescript
+if (options?.temperature !== undefined) {
+  params.temperature = options.temperature;
+}
+```
+
+So the *library* (`pi-ai`) fully supports per-request `temperature` — it's a real, working
+request parameter, not a stub. `topP`/`top_p`, by contrast, doesn't exist anywhere in `pi-ai` —
+that one genuinely has no equivalent at any layer.
+
+The reason `temperature` still can't be set for a custom model via `models.json` is one level up:
+`models.json`'s `ModelDefinitionSchema` has no `temperature` field, and `pi-coding-agent`'s
+`AgentSession` never populates `options.temperature` when it calls into `pi-ai` (confirmed: no
+references to `temperature` anywhere under `packages/coding-agent/src`). There's no CLI flag or
+`settings.json` key for it either. So the capability exists in the underlying library, but the
+`pi` CLI's own config surface doesn't expose a knob for it — meaning **if you want a fixed
+default temperature for a custom model in `pi`, you'd have to add it yourself**, e.g. via an
+extension hooking `before_provider_request` (see [`notes/Debug.md`](./Debug.md)) to inject
+`temperature` into the outgoing payload, or by using `pi-ai` directly as an SDK where you control
+`StreamOptions` yourself.
 
 ## Not portable via `models.json`
 
